@@ -47,6 +47,18 @@
   </div>
 
   <!-- ================================================================
+       PINNED PAGES BAR — fixed shortcuts at the top
+       ================================================================ -->
+  <div class="pinned-section" id="pinnedSection" style="display:none">
+    <div class="section-header">
+      <h2>Favorites</h2>
+      <div class="section-line"></div>
+      <div class="section-count" id="pinnedCount"></div>
+    </div>
+    <div class="pinned-list" id="pinnedList"></div>
+  </div>
+
+  <!-- ================================================================
        MAIN CONTENT AREA — two-column layout
        Left: open tabs (domain/mission cards)
        Right: saved for later checklist
@@ -57,10 +69,21 @@
     <!-- LEFT COLUMN: Open tabs -->
     <div class="active-section" id="openTabsSection" style="display:none">
       <div class="section-header">
-        <h2 id="openTabsSectionTitle">Right now</h2>
+        <h2 id="openTabsSectionTitle">Open tabs</h2>
         <div class="section-line"></div>
         <div class="section-count" id="openTabsSectionCount"></div>
       </div>
+      
+      <!-- Search Box -->
+      <div class="search-bar-container">
+        <div class="search-wrapper">
+          <svg class="search-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
+          </svg>
+          <input type="text" id="globalSearch" placeholder="Search across all open tabs..." autocomplete="off">
+        </div>
+      </div>
+
       <div class="missions" id="openTabsMissions"></div>
     </div>
 

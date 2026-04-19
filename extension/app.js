@@ -40,11 +40,12 @@ async function fetchOpenTabs() {
 
     const tabs = await chrome.tabs.query({});
     openTabs = tabs.map(t => ({
-      id:       t.id,
-      url:      t.url,
-      title:    t.title,
-      windowId: t.windowId,
-      active:   t.active,
+      id:           t.id,
+      url:          t.url,
+      title:        t.title,
+      windowId:     t.windowId,
+      active:       t.active,
+      lastAccessed: t.lastAccessed || 0,
       // Flag Tab Out's own pages so we can detect duplicate new tabs
       isTabOut: t.url === newtabUrl || t.url === 'chrome://newtab/',
     }));
@@ -281,6 +282,60 @@ async function dismissSavedTab(id) {
     tab.dismissed = true;
     await chrome.storage.local.set({ deferred });
   }
+}
+
+
+/* ----------------------------------------------------------------
+   PINNED PAGES — chrome.storage.local
+   ---------------------------------------------------------------- */
+
+/**
+ * getPinned()
+ * Returns all pinned pages from chrome.storage.local.
+ */
+async function getPinned() {
+  const { pinned = [] } = await chrome.storage.local.get('pinned');
+  return pinned;
+}
+
+/**
+ * savePinned(tab)
+ * Adds a tab to the pinned list.
+ */
+async function savePinned(tab) {
+  const { pinned = [] } = await chrome.storage.local.get('pinned');
+  if (pinned.some(p => p.url === tab.url)) return; // Already pinned
+
+  pinned.push({
+    url: tab.url,
+    title: tab.title,
+    pinnedAt: new Date().toISOString(),
+    lastUsedAt: new Date().toISOString()
+  });
+  await chrome.storage.local.set({ pinned });
+}
+
+/**
+ * updatePinnedUsage(url)
+ * Updates the lastUsedAt timestamp for a pinned item to move it to the front.
+ */
+async function updatePinnedUsage(url) {
+  const { pinned = [] } = await chrome.storage.local.get('pinned');
+  const item = pinned.find(p => p.url === url);
+  if (item) {
+    item.lastUsedAt = new Date().toISOString();
+    await chrome.storage.local.set({ pinned });
+  }
+}
+
+/**
+ * removePinned(url)
+ * Removes a URL from the pinned list.
+ */
+async function removePinned(url) {
+  const { pinned = [] } = await chrome.storage.local.get('pinned');
+  const filtered = pinned.filter(p => p.url !== url);
+  await chrome.storage.local.set({ pinned: filtered });
 }
 
 
@@ -700,6 +755,10 @@ const ICONS = {
   close:   `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>`,
   archive: `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 0 1-2.247 2.118H6.622a2.25 2.25 0 0 1-2.247-2.118L3.75 7.5m6 4.125l2.25 2.25m0 0l2.25 2.25M12 13.875l2.25-2.25M12 13.875l-2.25 2.25M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125Z" /></svg>`,
   focus:   `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 19.5 15-15m0 0H8.25m11.25 0v11.25" /></svg>`,
+  pin:     `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442a.562.562 0 01.313.987l-4.145 3.528a.563.563 0 00-.164.512l1.102 5.393a.562.562 0 01-.815.592L12 17.653l-4.78 2.508a.562.562 0 01-.815-.592l1.102-5.393a.563.563 0 00-.164-.512L3.257 11.41a.562.562 0 01.313-.987l5.518-.442a.563.563 0 00.475-.345l2.125-5.111z" /></svg>`,
+  unpin:   `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>`,
+  bookmark: `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" /></svg>`,
+  plus:    `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>`
 };
 
 
@@ -772,8 +831,11 @@ function buildOverflowChips(hiddenTabs, urlCounts = {}) {
       ${faviconUrl ? `<img class="chip-favicon" src="${faviconUrl}" alt="" onerror="this.style.display='none'">` : ''}
       <span class="chip-text">${label}</span>${dupeTag}
       <div class="chip-actions">
+        <button class="chip-action chip-pin" data-action="pin-tab" data-tab-url="${safeUrl}" data-tab-title="${safeTitle}" title="Pin to Favorites">
+          ${ICONS.pin}
+        </button>
         <button class="chip-action chip-save" data-action="defer-single-tab" data-tab-url="${safeUrl}" data-tab-title="${safeTitle}" title="Save for later">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" /></svg>
+          ${ICONS.bookmark}
         </button>
         <button class="chip-action chip-close" data-action="close-single-tab" data-tab-url="${safeUrl}" title="Close this tab">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
@@ -853,8 +915,11 @@ function renderDomainCard(group) {
       ${faviconUrl ? `<img class="chip-favicon" src="${faviconUrl}" alt="" onerror="this.style.display='none'">` : ''}
       <span class="chip-text">${label}</span>${dupeTag}
       <div class="chip-actions">
+        <button class="chip-action chip-pin" data-action="pin-tab" data-tab-url="${safeUrl}" data-tab-title="${safeTitle}" title="Pin to Favorites">
+          ${ICONS.pin}
+        </button>
         <button class="chip-action chip-save" data-action="defer-single-tab" data-tab-url="${safeUrl}" data-tab-title="${safeTitle}" title="Save for later">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" /></svg>
+          ${ICONS.bookmark}
         </button>
         <button class="chip-action chip-close" data-action="close-single-tab" data-tab-url="${safeUrl}" title="Close this tab">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
@@ -1131,15 +1196,16 @@ async function renderStaticDashboard() {
     return landingSuffixes.some(s => domain.endsWith(s));
   }
   domainGroups = Object.values(groupMap).sort((a, b) => {
-    const aIsLanding = a.domain === '__landing-pages__';
-    const bIsLanding = b.domain === '__landing-pages__';
-    if (aIsLanding !== bIsLanding) return aIsLanding ? -1 : 1;
+    // Sort strictly by the most recently accessed tab in each group
+    const aRecent = Math.max(...a.tabs.map(t => t.lastAccessed));
+    const bRecent = Math.max(...b.tabs.map(t => t.lastAccessed));
+    
+    return bRecent - aRecent;
+  });
 
-    const aIsPriority = isLandingDomain(a.domain);
-    const bIsPriority = isLandingDomain(b.domain);
-    if (aIsPriority !== bIsPriority) return aIsPriority ? -1 : 1;
-
-    return b.tabs.length - a.tabs.length;
+  // Also sort individual tabs within each group by recency
+  domainGroups.forEach(group => {
+    group.tabs.sort((a, b) => b.lastAccessed - a.lastAccessed);
   });
 
   // --- Render domain cards ---
@@ -1164,8 +1230,76 @@ async function renderStaticDashboard() {
   // --- Check for duplicate Tab Out tabs ---
   checkTabOutDupes();
 
+  // --- Render Pinned Section ---
+  await renderPinnedSection();
+
   // --- Render "Saved for Later" column ---
   await renderDeferredColumn();
+}
+
+/**
+ * renderPinnedSection()
+ * Renders the top "Favorites" bar with pinned shortcuts.
+ */
+async function renderPinnedSection() {
+  const section = document.getElementById('pinnedSection');
+  const list    = document.getElementById('pinnedList');
+  const countEl = document.getElementById('pinnedCount');
+
+  if (!section || !list) return;
+
+  let pinned = await getPinned();
+  
+  // Sort pinned items by lastUsedAt (newest first)
+  pinned = pinned.sort((a, b) => {
+    const timeA = new Date(a.lastUsedAt || a.pinnedAt || 0).getTime();
+    const timeB = new Date(b.lastUsedAt || b.pinnedAt || 0).getTime();
+    return timeB - timeA;
+  });
+
+  section.style.display = 'block';
+  if (countEl) {
+    countEl.innerHTML = `${pinned.length} item${pinned.length !== 1 ? 's' : ''}`;
+  }
+
+  const addTileHtml = `
+    <div class="pinned-item pinned-add-tile" data-action="show-add-pinned" title="Add new favorite">
+      <div class="pinned-favicon-add">${ICONS.plus}</div>
+      <span class="pinned-title">Add shortcut</span>
+    </div>
+  `;
+
+  if (pinned.length === 0) {
+    list.innerHTML = `
+      <div class="pinned-empty-state" style="border: none; padding: 0;">
+        <div class="pinned-list">
+          ${addTileHtml}
+          <div class="pinned-empty-text" style="display: flex; align-items: center; margin-left: 12px; text-align: left;">
+            No favorites yet. Click the <span style="color:var(--accent-amber)">${ICONS.pin.replace('<svg ', '<svg class="pinned-icon-small" ')}</span> on any tab to pin it here.
+          </div>
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  list.innerHTML = pinned.map(item => {
+    let domain = '';
+    try { domain = new URL(item.url).hostname; } catch {}
+    const faviconUrl = domain ? `https://www.google.com/s2/favicons?domain=${domain}&sz=32` : '';
+    const safeUrl   = item.url.replace(/"/g, '&quot;');
+    const safeTitle = (item.title || item.url).replace(/"/g, '&quot;');
+
+    return `
+      <a href="${safeUrl}" class="pinned-item" title="${safeTitle}">
+        <img class="pinned-favicon" src="${faviconUrl}" alt="" onerror="this.style.display='none'">
+        <span class="pinned-title">${item.title || item.url}</span>
+        <div class="pinned-remove" data-action="remove-pinned" data-url="${safeUrl}" title="Remove from favorites">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+        </div>
+      </a>
+    `;
+  }).join('') + addTileHtml;
 }
 
 async function renderDashboard() {
@@ -1217,7 +1351,11 @@ document.addEventListener('click', async (e) => {
   // ---- Focus a specific tab ----
   if (action === 'focus-tab') {
     const tabUrl = actionEl.dataset.tabUrl;
-    if (tabUrl) await focusTab(tabUrl);
+    if (tabUrl) {
+      await focusTab(tabUrl);
+      // Small delay then re-render in background (though we're switching away)
+      setTimeout(renderDashboard, 100);
+    }
     return;
   }
 
@@ -1297,6 +1435,48 @@ document.addEventListener('click', async (e) => {
 
     showToast('Saved for later');
     await renderDeferredColumn();
+    return;
+  }
+
+  // ---- Pin a tab to favorites ----
+  if (action === 'pin-tab') {
+    e.stopPropagation();
+    const tabUrl   = actionEl.dataset.tabUrl;
+    const tabTitle = actionEl.dataset.tabTitle || tabUrl;
+    if (!tabUrl) return;
+
+    await savePinned({ url: tabUrl, title: tabTitle });
+    showToast('Added to Favorites');
+    await renderPinnedSection();
+
+    // Visual feedback on the chip
+    actionEl.classList.add('pinned');
+    return;
+  }
+
+  // ---- Remove a pinned tab ----
+  if (action === 'remove-pinned') {
+    e.preventDefault();
+    e.stopPropagation();
+    const url = actionEl.dataset.url;
+    if (!url) return;
+
+    await removePinned(url);
+    showToast('Removed from Favorites');
+    await renderPinnedSection();
+    return;
+  }
+
+  // ---- Show manual add form for favorites ----
+  if (action === 'show-add-pinned') {
+    const url = prompt('Enter website URL:', 'https://');
+    if (!url) return;
+    const title = prompt('Enter a name for this shortcut:', '');
+    if (!title) return;
+
+    await savePinned({ url, title });
+    showToast('Shortcut added');
+    await renderPinnedSection();
     return;
   }
 
@@ -1480,3 +1660,61 @@ document.addEventListener('input', async (e) => {
    INITIALIZE
    ---------------------------------------------------------------- */
 renderDashboard();
+
+// ---- Search across open tabs ----
+document.addEventListener('input', (e) => {
+  if (e.target.id !== 'globalSearch') return;
+
+  const q = e.target.value.trim().toLowerCase();
+  const missionsEl = document.getElementById('openTabsMissions');
+  if (!missionsEl) return;
+
+  if (!q) {
+    // Restore full list
+    missionsEl.innerHTML = domainGroups.map(g => renderDomainCard(g)).join('');
+    checkAndShowEmptyState();
+    return;
+  }
+
+  // Filter groups where at least one tab matches or the domain name matches
+  const filteredGroups = domainGroups.map(group => {
+    const matchingTabs = group.tabs.filter(tab => 
+      (tab.title || '').toLowerCase().includes(q) || 
+      (tab.url || '').toLowerCase().includes(q) ||
+      friendlyDomain(new URL(tab.url).hostname).toLowerCase().includes(q)
+    );
+    if (matchingTabs.length > 0) {
+      return { ...group, tabs: matchingTabs };
+    }
+    return null;
+  }).filter(Boolean);
+
+  if (filteredGroups.length > 0) {
+    missionsEl.innerHTML = filteredGroups.map(g => renderDomainCard(g)).join('');
+  } else {
+    missionsEl.innerHTML = `
+      <div style="column-span: all; padding: 48px 0; text-align: center; color: var(--muted); font-size: 15px;">
+        No tabs match your search. Try a different term?
+      </div>
+    `;
+  }
+});
+
+// ---- Auto-refresh when switching back to Tab Out ----
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    renderDashboard();
+  }
+});
+
+// Also refresh on window focus to catch fast switches
+window.addEventListener('focus', renderDashboard);
+
+// Update Pinned lastUsedAt when clicking a favorite link
+document.addEventListener('click', async (e) => {
+  const pinnedItem = e.target.closest('.pinned-item');
+  if (pinnedItem && !e.target.closest('[data-action="remove-pinned"]')) {
+    const url = pinnedItem.getAttribute('href');
+    if (url) await updatePinnedUsage(url);
+  }
+});
